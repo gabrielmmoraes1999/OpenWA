@@ -29,6 +29,23 @@ const MAX_CHATS_PER_SESSION = 500;
 @Injectable()
 export class PresenceStore {
   private readonly bySession = new Map<string, Map<string, ChatPresence>>();
+  /**
+   * Last `PUT /presence` preference per session (`true` = stay online, `false` = stay offline).
+   * Chat-scoped indicators (typing/recording) and some send paths replace the global available
+   * broadcast; without remembering the caller's intent, that preference is lost after the first
+   * message. Cleared with the rest of the session's presence on stop/replace.
+   */
+  private readonly ownIntent = new Map<string, boolean>();
+
+  /** Remember the account's own global presence preference for this connection. */
+  setOwnIntent(sessionId: string, available: boolean): void {
+    this.ownIntent.set(sessionId, available);
+  }
+
+  /** The last setOwnIntent value, or undefined when the caller never set one. */
+  getOwnIntent(sessionId: string): boolean | undefined {
+    return this.ownIntent.get(sessionId);
+  }
 
   /**
    * Record a report. Returns whether it CHANGED anything a consumer would care about — WhatsApp
@@ -69,6 +86,7 @@ export class PresenceStore {
   /** Drop everything for a session — it stopped, was deleted, or its engine was replaced. */
   clear(sessionId: string): void {
     this.bySession.delete(sessionId);
+    this.ownIntent.delete(sessionId);
   }
 }
 

@@ -76,6 +76,7 @@ describe('MessageSendService', () => {
 
     sessionService = {
       findOne: jest.fn().mockResolvedValue({ id: 'sess-1', phone: '628123456789' }),
+      reannounceOwnPresence: jest.fn().mockResolvedValue(undefined),
     };
 
     engines = new EngineRegistry();
@@ -125,13 +126,17 @@ describe('MessageSendService', () => {
       await service.sendText('sess-1', { chatId: '628123456789@c.us', text: 'Hello' });
 
       expect(mockEngine.sendChatState).toHaveBeenCalledWith('628123456789@c.us', 'typing');
+      expect(mockEngine.sendChatState).toHaveBeenCalledWith('628123456789@c.us', 'paused');
       expect(mockEngine.sendTextMessage).toHaveBeenCalledWith('628123456789@c.us', 'Hello');
+      expect(sessionService.reannounceOwnPresence).toHaveBeenCalledWith('sess-1');
     });
 
     it('does not send typing presence when SIMULATE_TYPING=false', async () => {
       process.env.SIMULATE_TYPING = 'false';
       await service.sendText('sess-1', { chatId: '628123456789@c.us', text: 'Hello' });
       expect(mockEngine.sendChatState).not.toHaveBeenCalled();
+      // Preference is still reannounced after a successful send (covers media / typing-off paths).
+      expect(sessionService.reannounceOwnPresence).toHaveBeenCalledWith('sess-1');
     });
   });
 

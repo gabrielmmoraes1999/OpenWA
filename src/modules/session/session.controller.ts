@@ -603,7 +603,9 @@ export class SessionController {
       "offline suppresses the phone's own alerts — set `available: false` to hand them back.\n\n" +
       'The setting belongs to the connection: it does not survive a restart or reconnect and must ' +
       'be re-issued after `session.status` reports one (on Baileys the socket re-announces itself ' +
-      'per its connect-time behaviour). Supported on both engines.',
+      'per its connect-time behaviour). While the connection is up, the preference is remembered and ' +
+      're-asserted after typing/recording indicators and outbound sends, so a prior `available: true` ' +
+      'is not lost when the account briefly shows as composing. Supported on both engines.',
   })
   @ApiParam({ name: 'sessionId', description: 'Session ID' })
   @ApiResponse({ status: 200, description: 'Presence published', type: SessionActionResponseDto })

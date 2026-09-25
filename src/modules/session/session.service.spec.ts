@@ -6751,6 +6751,34 @@ describe('SessionService', () => {
       expect(mockEngine.sendChatState).toHaveBeenCalledWith('123@c.us', 'typing');
     });
 
+    it('reannounces a remembered online preference after paused', async () => {
+      const session = createMockSession();
+      (repository.findOne as jest.Mock).mockResolvedValue(session);
+      (repository.update as jest.Mock).mockResolvedValue({ affected: 1 });
+
+      await service.start('sess-uuid-1');
+      await service.setOnlinePresence('sess-uuid-1', true);
+      mockEngine.setOnlinePresence.mockClear();
+
+      await service.sendChatState('sess-uuid-1', '123@c.us', 'paused');
+
+      expect(mockEngine.sendChatState).toHaveBeenCalledWith('123@c.us', 'paused');
+      expect(mockEngine.setOnlinePresence).toHaveBeenCalledWith(true);
+    });
+
+    it('does not reannounce after typing when no preference was set', async () => {
+      const session = createMockSession();
+      (repository.findOne as jest.Mock).mockResolvedValue(session);
+      (repository.update as jest.Mock).mockResolvedValue({ affected: 1 });
+
+      await service.start('sess-uuid-1');
+      mockEngine.setOnlinePresence.mockClear();
+
+      await service.sendChatState('sess-uuid-1', '123@c.us', 'typing');
+
+      expect(mockEngine.setOnlinePresence).not.toHaveBeenCalled();
+    });
+
     it('should throw BadRequestException when session is not started', async () => {
       const session = createMockSession();
       (repository.findOne as jest.Mock).mockResolvedValue(session);
@@ -6779,6 +6807,35 @@ describe('SessionService', () => {
       (repository.findOne as jest.Mock).mockResolvedValue(session);
 
       await expect(service.setOnlinePresence('sess-uuid-1', true)).rejects.toThrow(BadRequestException);
+    });
+  });
+
+  describe('reannounceOwnPresence', () => {
+    it('re-publishes a remembered preference', async () => {
+      const session = createMockSession();
+      (repository.findOne as jest.Mock).mockResolvedValue(session);
+      (repository.update as jest.Mock).mockResolvedValue({ affected: 1 });
+
+      await service.start('sess-uuid-1');
+      await service.setOnlinePresence('sess-uuid-1', true);
+      mockEngine.setOnlinePresence.mockClear();
+
+      await service.reannounceOwnPresence('sess-uuid-1');
+
+      expect(mockEngine.setOnlinePresence).toHaveBeenCalledWith(true);
+    });
+
+    it('is a no-op when the caller never set a preference', async () => {
+      const session = createMockSession();
+      (repository.findOne as jest.Mock).mockResolvedValue(session);
+      (repository.update as jest.Mock).mockResolvedValue({ affected: 1 });
+
+      await service.start('sess-uuid-1');
+      mockEngine.setOnlinePresence.mockClear();
+
+      await service.reannounceOwnPresence('sess-uuid-1');
+
+      expect(mockEngine.setOnlinePresence).not.toHaveBeenCalled();
     });
   });
 

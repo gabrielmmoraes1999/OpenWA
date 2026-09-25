@@ -14,6 +14,12 @@ import { isProtocolTimeout } from './wwebjs-lifecycle';
  * the messaging delegate's send-id cache, exactly like a send.
  */
 export class WwebjsChats {
+  /**
+   * Last setOnlinePresence preference for this connection. Typing/recording replace the global
+   * available broadcast; after `paused` we re-assert this so a prior `available: true` survives.
+   */
+  private desiredAvailable: boolean | undefined;
+
   constructor(
     private readonly host: WwebjsEngineHost,
     private readonly messaging: WwebjsMessaging,
@@ -288,6 +294,7 @@ export class WwebjsChats {
    */
   async setOnlinePresence(available: boolean): Promise<void> {
     this.host.ensureReady();
+    this.desiredAvailable = available;
     if (available) {
       await this.client().sendPresenceAvailable();
     } else {
@@ -317,6 +324,25 @@ export class WwebjsChats {
       // so log at WARN, not ERROR: a migrated contact routinely yields `No LID for user` on the
       // presence path and an ERROR line reads as a fault when nothing actually failed (#582).
       this.host.logger.warn(`Could not set chat state '${state}' for ${chatId} (best-effort)`, {
+        error: String(error),
+      });
+    }
+    // clearState ends the typing/recording indicator; put the remembered global preference back.
+    if (state === 'paused') {
+      await this.reannounceDesiredPresence();
+    }
+  }
+
+  private async reannounceDesiredPresence(): Promise<void> {
+    if (this.desiredAvailable === undefined) return;
+    try {
+      if (this.desiredAvailable) {
+        await this.client().sendPresenceAvailable();
+      } else {
+        await this.client().sendPresenceUnavailable();
+      }
+    } catch (error) {
+      this.host.logger.warn('Could not reannounce own presence after chat state (best-effort)', {
         error: String(error),
       });
     }

@@ -771,12 +771,33 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
   /**
    * Publish the account's own global presence (appear online/offline). Connection-scoped: the
    * setting resets on reconnect, so callers re-issue it after `session.status` reports one.
+   * The preference is remembered for the life of the connection so chat-scoped indicators
+   * (typing/recording) and outbound sends can re-assert it instead of leaving the account
+   * looking offline after the first message.
    */
   async setOnlinePresence(id: string, available: boolean): Promise<void> {
     await this.findOne(id);
     const engine = this.requireEngine(id);
-
+    this.presence.setOwnIntent(id, available);
     return engine.setOnlinePresence(available);
+  }
+
+  /**
+   * Re-publish a prior setOnlinePresence preference. Best-effort no-op when the caller never set
+   * one, the engine is gone, or the publish fails — presence must not break a surrounding send.
+   */
+  async reannounceOwnPresence(id: string): Promise<void> {
+    const desired = this.presence.getOwnIntent(id);
+    if (desired === undefined) return;
+    const engine = this.engines.get(id);
+    if (!engine) return;
+    try {
+      await engine.setOnlinePresence(desired);
+    } catch (error) {
+      this.logger.warn(`Could not reannounce own presence for session ${id} (best-effort)`, {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
@@ -864,6 +885,11 @@ export class SessionService implements OnModuleDestroy, OnModuleInit, OnApplicat
     const engine = this.requireEngine(id);
 
     await engine.sendChatState(chatId, state);
+    // Typing/recording replace the global available broadcast; once the caller clears the
+    // indicator, put the remembered own-presence preference back.
+    if (state === 'paused') {
+      await this.reannounceOwnPresence(id);
+    }
   }
 
   /**
