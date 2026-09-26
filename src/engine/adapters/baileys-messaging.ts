@@ -27,6 +27,7 @@ import { buildVCard } from './vcard';
 import { resolveBaileysButtonClick, setBaileysText } from './baileys-message-mapper';
 import { loadRemoteMediaBuffer } from '../../common/media/load-remote-media';
 import { BadRequestException, InternalServerErrorException } from '@nestjs/common';
+import { EngineNotReadyError } from '../../common/errors/engine-not-ready.error';
 import { EngineRefusedError } from '../../common/errors/engine-refused.error';
 import { MessageNotFoundError } from '../../common/errors/message-not-found.error';
 import { type createLogger } from '../../common/services/logger.service';
@@ -193,13 +194,6 @@ export async function resolveMediaBuffer(
 }
 
 export class BaileysMessaging {
-  /**
-   * Last setOnlinePresence preference for this connection. Chat-scoped composing/recording
-   * replaces the global available broadcast; after `paused` we re-assert this so a prior
-   * `available: true` is not lost after typing or a simulated pre-send typing pause.
-   */
-  private desiredAvailable: boolean | undefined;
-
   constructor(
     private readonly host: BaileysMessagingHost,
     private readonly queryBudgetMs: number = BAILEYS_QUERY_BUDGET_MS,
@@ -312,40 +306,26 @@ export class BaileysMessaging {
         error: String(error),
       });
     }
-    // composing/recording replace the global available broadcast; restore the caller's preference
-    // once they clear the indicator. Do NOT restore after typing/recording themselves — that would
-    // cancel the indicator the caller just asked for.
-    if (state === 'paused') {
-      await this.reannounceDesiredPresence();
-    }
   }
 
   /**
    * Publish the account's own GLOBAL presence — the no-jid form of sendPresenceUpdate, which
-   * addresses the whole account rather than a chat. Not best-effort, unlike sendChatState: the
-   * caller asked for a specific visibility, so a failure surfaces instead of leaving the account
-   * silently online (#871). Resets on reconnect per the socket's markOnlineOnConnect option.
+   * addresses the whole account rather than a chat (`<presence>`, not a per-chat `<chatstate>`).
+   * Not best-effort, unlike sendChatState: the caller asked for a specific visibility, so a
+   * failure surfaces instead of leaving the account silently online (#871).
+   *
+   * Baileys resolves this call without sending anything when `creds.me.name` is unset (it logs
+   * "no name present, ignoring presence update request" and returns). `sock.user` is that cred.
+   * Refusing here keeps PUT /presence from reporting success for an update that never left.
    */
   async setOnlinePresence(available: boolean): Promise<void> {
     this.host.ensureReady();
-    // Remember so chat-scoped composing/recording can be followed by a restore of this preference.
-    this.desiredAvailable = available;
-    await this.sock().sendPresenceUpdate(available ? 'available' : 'unavailable');
-  }
-
-  /**
-   * Re-assert the last setOnlinePresence preference after a chat-scoped indicator. Best-effort:
-   * a failure here must not surface on the typing endpoint.
-   */
-  private async reannounceDesiredPresence(): Promise<void> {
-    if (this.desiredAvailable === undefined) return;
-    try {
-      await this.sock().sendPresenceUpdate(this.desiredAvailable ? 'available' : 'unavailable');
-    } catch (error) {
-      this.host.logger.warn('Could not reannounce own presence after chat state (best-effort)', {
-        error: String(error),
-      });
+    if (!this.sock().user?.name) {
+      throw new EngineNotReadyError(
+        'The account push name is not available yet, so this presence update would be ignored. Retry once the session has synced its profile name.',
+      );
     }
+    await this.sock().sendPresenceUpdate(available ? 'available' : 'unavailable');
   }
 
   /**

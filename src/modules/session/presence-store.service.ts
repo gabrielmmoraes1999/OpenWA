@@ -30,10 +30,11 @@ const MAX_CHATS_PER_SESSION = 500;
 export class PresenceStore {
   private readonly bySession = new Map<string, Map<string, ChatPresence>>();
   /**
-   * Last `PUT /presence` preference per session (`true` = stay online, `false` = stay offline).
-   * Chat-scoped indicators (typing/recording) and some send paths replace the global available
-   * broadcast; without remembering the caller's intent, that preference is lost after the first
-   * message. Cleared with the rest of the session's presence on stop/replace.
+   * Last successful `PUT /presence` preference per session (`true` = stay online, `false` = stay
+   * offline). Re-applied once each time that engine's connection opens — Baileys broadcasts
+   * `available` on connect, which would otherwise wipe it. Cleared with the rest of the session's
+   * presence when the engine is replaced or the session is deleted. Not written when the publish
+   * itself failed.
    */
   private readonly ownIntent = new Map<string, boolean>();
 

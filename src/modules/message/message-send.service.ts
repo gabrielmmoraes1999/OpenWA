@@ -814,10 +814,6 @@ export class MessageSendService {
         });
       }
     }
-    // Re-assert a prior PUT /presence preference after every successful send. Chat-scoped
-    // indicators and some engine send paths replace the global available broadcast; without this,
-    // `available: true` is lost after the first outbound message even when typing simulation is off.
-    await this.sessionService.reannounceOwnPresence(message.sessionId);
     return { messageId: result.id, timestamp: result.timestamp };
   }
 
@@ -835,11 +831,6 @@ export class MessageSendService {
    * `sendChatState`) and strictly best-effort — it never throws and never blocks the send if presence
    * fails or the engine has no presence concept. `SIMULATE_TYPING_MAX_MS` (default 5000) caps the pause.
    * Note: this covers single sends only; bulk sends use their own `delayBetweenMessages` throttle.
-   *
-   * Ends with `paused` so the typing indicator is cleared and the engine re-asserts any remembered
-   * own-presence preference — otherwise composing replaces the global available broadcast and the
-   * account looks offline after the first automated send. `persistSentState` also reannounces via
-   * the session-level intent for sends that skip this pause.
    */
   private async simulateTypingIfEnabled(engine: IWhatsAppEngine, chatId: string, text: string): Promise<void> {
     const { simulateTyping, simulateTypingMaxMs } = resolveFeatureFlags(this.configService);
@@ -850,7 +841,6 @@ export class MessageSendService {
       const planned = Math.min(maxMs, 500 + text.length * 45);
       const jittered = Math.round(planned * (0.85 + Math.random() * 0.3)); // ±15% so it isn't metronomic
       await new Promise(resolve => setTimeout(resolve, jittered));
-      await engine.sendChatState(chatId, 'paused');
     } catch (error) {
       this.logger.warn(`simulateTyping skipped: ${error instanceof Error ? error.message : String(error)}`);
     }

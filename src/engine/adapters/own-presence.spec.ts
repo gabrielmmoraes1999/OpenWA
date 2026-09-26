@@ -1,3 +1,4 @@
+import { EngineNotReadyError } from '../../common/errors/engine-not-ready.error';
 import { WwebjsChats } from './wwebjs-chats';
 import { BaileysMessaging, type BaileysMessagingHost } from './baileys-messaging';
 import { createLogger } from '../../common/services/logger.service';
@@ -11,7 +12,7 @@ import type { WASocket } from '@whiskeysockets/baileys';
  * typing/recording indicator (sendChatState), this is NOT best-effort: the caller explicitly asked
  * to appear offline — a bot that silently stays visible online causes exactly the missed-phone-
  * notification problem the feature exists to solve (#871) — so a failure surfaces instead of being
- * swallowed. The setting belongs to the connection and resets on reconnect.
+ * swallowed. Chat state is a separate wire operation and does not republish this.
  */
 
 const logger = createLogger('own-presence.spec');
@@ -50,7 +51,7 @@ describe('WwebjsChats.setOnlinePresence', () => {
     await expect(chats.setOnlinePresence(false)).rejects.toThrow('page died');
   });
 
-  it('reannounces a remembered available preference after paused', async () => {
+  it('clears a chat indicator without publishing global presence', async () => {
     const clearState = jest.fn().mockResolvedValue(undefined);
     const client = {
       sendPresenceAvailable: jest.fn().mockResolvedValue(undefined),
@@ -67,19 +68,23 @@ describe('WwebjsChats.setOnlinePresence', () => {
     } as unknown as WwebjsEngineHost;
     const chats = new WwebjsChats(host, messaging);
 
-    await chats.setOnlinePresence(true);
-    client.sendPresenceAvailable.mockClear();
-
     await chats.sendChatState('123@c.us', 'paused');
 
     expect(clearState).toHaveBeenCalled();
-    expect(client.sendPresenceAvailable).toHaveBeenCalledTimes(1);
+    expect(client.sendPresenceAvailable).not.toHaveBeenCalled();
   });
 });
 
 describe('BaileysMessaging.setOnlinePresence', () => {
-  function makeMessaging(): { messaging: BaileysMessaging; sock: { sendPresenceUpdate: jest.Mock } } {
-    const sock = { sendPresenceUpdate: jest.fn().mockResolvedValue(undefined) };
+  function makeMessaging(name: string | null = 'Me'): {
+    messaging: BaileysMessaging;
+    sock: { sendPresenceUpdate: jest.Mock; user?: { name?: string } };
+  } {
+    const sock = {
+      sendPresenceUpdate: jest.fn().mockResolvedValue(undefined),
+      // null means creds.me itself is missing; '' is the empty name Baileys also ignores.
+      ...(name === null ? {} : { user: { name } }),
+    };
     const host = {
       ensureReady: jest.fn(),
       getSocket: () => sock as unknown as WASocket,
@@ -108,18 +113,19 @@ describe('BaileysMessaging.setOnlinePresence', () => {
     await expect(messaging.setOnlinePresence(true)).rejects.toThrow('socket closed');
   });
 
-  it('reannounces a remembered available preference after paused', async () => {
-    const { messaging, sock } = makeMessaging();
-    await messaging.setOnlinePresence(true);
-    sock.sendPresenceUpdate.mockClear();
-
-    await messaging.sendChatState('628111@s.whatsapp.net', 'paused');
-
-    expect(sock.sendPresenceUpdate).toHaveBeenCalledWith('paused', '628111@s.whatsapp.net');
-    expect(sock.sendPresenceUpdate).toHaveBeenCalledWith('available');
+  it('refuses when the push name is not set — Baileys would resolve without sending', async () => {
+    const { messaging, sock } = makeMessaging(null);
+    await expect(messaging.setOnlinePresence(true)).rejects.toBeInstanceOf(EngineNotReadyError);
+    expect(sock.sendPresenceUpdate).not.toHaveBeenCalled();
   });
 
-  it('does not reannounce after composing when no preference was set', async () => {
+  it('refuses an empty push name the same way Baileys treats a missing one', async () => {
+    const { messaging, sock } = makeMessaging('');
+    await expect(messaging.setOnlinePresence(false)).rejects.toBeInstanceOf(EngineNotReadyError);
+    expect(sock.sendPresenceUpdate).not.toHaveBeenCalled();
+  });
+
+  it('sends composing as a per-chat update and nothing global', async () => {
     const { messaging, sock } = makeMessaging();
     await messaging.sendChatState('628111@s.whatsapp.net', 'typing');
     expect(sock.sendPresenceUpdate).toHaveBeenCalledTimes(1);
